@@ -1,53 +1,81 @@
-const { Command } = require('commander');
-const http = require('http');
-const { promises: fs } = require('fs');
-const path = require('path');
+// index.js
+const http = require("http");
+const fs = require("fs/promises");
+const path = require("path");
+const { Command } = require("commander");
 
 const program = new Command();
 
+// Налаштування командного рядка
 program
-    .requiredOption('--host <host>', 'адреса сервера')
-    .requiredOption('--port <number>', 'порт сервера')
-    .requiredOption('--cache <path>', 'шлях до директорії з кешем');
+    .requiredOption("-h, --host <host>", "Адреса сервера")
+    .requiredOption("-p, --port <port>", "Порт сервера", parseInt)
+    .requiredOption("-c, --cache <cache>", "Шлях до директорії для кешу")
+    .parse(process.argv);
 
-program.parse(process.argv);
+const { host, port, cache } = program.opts();
 
-const options = program.opts();
+// Перевірка на існування директорії кешу
+fs.mkdir(cache, { recursive: true }).catch((err) => {
+    console.error("Помилка створення кеш-директорії:", err.message);
+    process.exit(1);
+});
 
-const cacheDir = options.cache;
-
+// Створення HTTP сервера
 const server = http.createServer(async (req, res) => {
-    const urlParts = req.url.split('/');
-    const httpCode = urlParts[1];
+    const { method, url } = req;
 
-    if (!httpCode.match(/^\d{3}$/)) {
-        res.statusCode = 400;
-        res.end('Bad Request');
-        return;
-    }
+    // URL повинен мати формат /<код>
+    const code = url.slice(1);
+    const filePath = path.join(cache, `${code}.jpg`);
 
-    const filePath = path.join(cacheDir, `${httpCode}.jpg`);
+    try {
+        switch (method) {
+            case "GET":
+                // Читання файлу з кешу
+                const image = await fs.readFile(filePath);
+                res.writeHead(200, { "Content-Type": "image/jpeg" });
+                res.end(image);
+                break;
 
-    switch (req.method) {
-        case 'GET':
-            try {
-                const fileData = await fs.readFile(filePath);
-                res.setHeader('Content-Type', 'image/jpeg');
-                res.statusCode = 200;
-                res.end(fileData);
-            } catch (err) {
-                res.statusCode = 404;
-                res.end('Not Found');
-            }
-            break;
+            case "PUT":
+                // Запис файлу в кеш
+                const chunks = [];
+                req.on("data", (chunk) => chunks.push(chunk));
+                req.on("end", async () => {
+                    const body = Buffer.concat(chunks);
+                    await fs.writeFile(filePath, body);
+                    res.writeHead(201, { "Content-Type": "text/plain" });
+                    res.end("Created");
+                });
+                break;
 
-        default:
-            res.statusCode = 405;
-            res.end('Method Not Allowed');
-            break;
+            case "DELETE":
+                // Видалення файлу з кешу
+                await fs.unlink(filePath);
+                res.writeHead(200, { "Content-Type": "text/plain" });
+                res.end("Deleted");
+                break;
+
+            default:
+                // Метод не підтримується
+                res.writeHead(405, { "Content-Type": "text/plain" });
+                res.end("Method Not Allowed");
+                break;
+        }
+    } catch (err) {
+        if (err.code === "ENOENT") {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not Found");
+        } else {
+            res.writeHead(500, { "Content-Type": "text/plain" });
+            res.end("Internal Server Error");
+            console.error(err.message);
+        }
     }
 });
 
-server.listen(options.port, options.host, () => {
-    console.log(`Сервер запущено на ${options.host}:${options.port}`);
+// Запуск сервера
+server.listen(port, host, () => {
+    console.log(`Сервер запущено на http://${host}:${port}`);
 });
