@@ -13,7 +13,7 @@
   "scripts": {
 
 
-    "start": "nodemon index.js",
+    "start": "node index.js --host localhost --port 3000 --cache ./cache",
 
 
     "test": "echo \"Error: no test specified\" && exit 1"
